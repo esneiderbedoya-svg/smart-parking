@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Smart Parking — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+/* ─── RESET & BASE ─────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:        #0d1117;
+  --bg2:       #161b22;
+  --bg3:       #1c2230;
+  --border:    rgba(255,255,255,0.07);
+  --border2:   rgba(255,255,255,0.13);
+  --text:      #e6edf3;
+  --text2:     #8b949e;
+  --text3:     #4d5566;
+  --green:     #3fb950;
+  --green-dim: rgba(63,185,80,0.12);
+  --red:       #f85149;
+  --red-dim:   rgba(248,81,73,0.12);
+  --blue:      #58a6ff;
+  --blue-dim:  rgba(88,166,255,0.10);
+  --amber:     #d29922;
+  --amber-dim: rgba(210,153,34,0.12);
+  --teal:      #39c5cf;
+  --teal-dim:  rgba(57,197,207,0.10);
+  --accent:    #58a6ff;
+  --radius:    10px;
+  --radius-lg: 14px;
+}
+html { font-size: 14px; background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; }
+body { min-height: 100vh; }
+
+/* ─── LAYOUT ─────────────────────────────────────────────── */
+.app { display: grid; grid-template-rows: 56px 1fr; min-height: 100vh; }
+
+/* ─── TOP BAR ────────────────────────────────────────────── */
+.topbar {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px; position: sticky; top: 0; z-index: 100;
+}
+.logo { display: flex; align-items: center; gap: 10px; }
+.logo-icon { width: 28px; height: 28px; background: var(--blue-dim); border: 1px solid var(--blue); border-radius: 7px; display: flex; align-items: center; justify-content: center; }
+.logo-icon svg { width: 16px; height: 16px; fill: var(--blue); }
+.logo-name { font-size: 15px; font-weight: 600; letter-spacing: -0.02em; color: var(--text); }
+.logo-name span { color: var(--blue); }
+
+.topbar-right { display: flex; align-items: center; gap: 16px; }
+.clock { font-family: 'DM Mono', monospace; font-size: 13px; color: var(--text2); }
+.conn-pill { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; border-radius: 20px; border: 1px solid; cursor: pointer; transition: all .2s; font-weight: 500; }
+.conn-pill.online  { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+.conn-pill.offline { background: var(--red-dim);   border-color: var(--red);   color: var(--red); }
+.conn-pill.connecting { background: var(--amber-dim); border-color: var(--amber); color: var(--amber); }
+.conn-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.conn-dot.pulse { animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* ─── MAIN ───────────────────────────────────────────────── */
+.main { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; max-width: 1200px; margin: 0 auto; width: 100%; }
+
+/* ─── STATS ROW ──────────────────────────────────────────── */
+.stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.stat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px 18px; position: relative; overflow: hidden; transition: border-color .2s; }
+.stat-card:hover { border-color: var(--border2); }
+.stat-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; border-radius:2px 2px 0 0; }
+.stat-card.blue::before  { background: var(--blue); }
+.stat-card.green::before { background: var(--green); }
+.stat-card.red::before   { background: var(--red); }
+.stat-card.amber::before { background: var(--amber); }
+.stat-label { font-size: 11px; font-weight: 500; color: var(--text2); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 8px; }
+.stat-value { font-size: 32px; font-weight: 600; line-height: 1; color: var(--text); font-family: 'DM Mono', monospace; }
+.stat-card.blue  .stat-value { color: var(--blue); }
+.stat-card.green .stat-value { color: var(--green); }
+.stat-card.red   .stat-value { color: var(--red); }
+.stat-card.amber .stat-value { color: var(--amber); }
+.stat-sub { font-size: 11px; color: var(--text3); margin-top: 6px; }
+
+/* ─── PROGRESS BAR ───────────────────────────────────────── */
+.occ-bar-wrap { margin-top: 10px; }
+.occ-bar-bg { background: var(--bg3); border-radius: 6px; height: 8px; overflow: hidden; }
+.occ-bar-fill { height: 100%; border-radius: 6px; transition: width .7s ease, background .5s; }
+.occ-bar-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--text3); margin-top: 5px; }
+
+/* ─── GRID ───────────────────────────────────────────────── */
+.content-grid { display: grid; grid-template-columns: 1fr 340px; gap: 16px; }
+
+/* ─── SPOTS CARD ─────────────────────────────────────────── */
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 18px; }
+.card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.card-title { font-size: 13px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .06em; }
+.card-badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500; }
+.card-badge.green { background: var(--green-dim); color: var(--green); }
+.card-badge.red   { background: var(--red-dim);   color: var(--red); }
+
+.spots-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.spot {
+  border-radius: var(--radius); border: 1px solid var(--border);
+  padding: 14px 10px; text-align: center; cursor: pointer;
+  transition: all .25s; position: relative; background: var(--bg3);
+  user-select: none;
+}
+.spot.libre   { border-color: rgba(63,185,80,.25);  background: rgba(63,185,80,.05); }
+.spot.ocupado { border-color: rgba(248,81,73,.25);  background: rgba(248,81,73,.05); }
+.spot:hover   { transform: translateY(-2px); border-color: var(--border2); }
+.spot.libre:hover   { border-color: var(--green); }
+.spot.ocupado:hover { border-color: var(--red); }
+.spot-num  { font-size: 10px; font-weight: 600; letter-spacing: .08em; color: var(--text3); margin-bottom: 8px; text-transform: uppercase; }
+.spot-icon { font-size: 22px; line-height: 1; margin-bottom: 6px; min-height: 24px; }
+.spot-state { font-size: 11px; font-weight: 500; }
+.spot.libre   .spot-state { color: var(--green); }
+.spot.ocupado .spot-state { color: var(--red); }
+
+/* ─── RIGHT COLUMN ───────────────────────────────────────── */
+.right-col { display: flex; flex-direction: column; gap: 12px; }
+
+/* ─── SEMÁFOROS ──────────────────────────────────────────── */
+.semaforos-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.semaforo-wrap { text-align: center; }
+.sem-label { font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 10px; }
+.sem-body { background: #1a1a1a; border-radius: 14px; border: 2px solid #222; padding: 12px 14px; display: inline-flex; flex-direction: column; align-items: center; gap: 9px; }
+.luz { width: 26px; height: 26px; border-radius: 50%; transition: opacity .4s, box-shadow .4s; }
+.luz.off { opacity: .12; box-shadow: none; }
+.luz.rojo    { background: #f85149; }
+.luz.amarillo{ background: #d29922; }
+.luz.verde   { background: #3fb950; }
+.luz.rojo.on    { box-shadow: 0 0 10px 2px rgba(248,81,73,.5); }
+.luz.amarillo.on{ box-shadow: 0 0 10px 2px rgba(210,153,34,.5); }
+.luz.verde.on   { box-shadow: 0 0 10px 2px rgba(63,185,80,.5); }
+.sem-estado { font-size: 12px; font-weight: 600; margin-top: 6px; }
+
+/* ─── BARRERAS ───────────────────────────────────────────── */
+.barrera { display: flex; align-items: center; gap: 10px; background: var(--bg3); border-radius: var(--radius); padding: 10px 12px; border: 1px solid var(--border); }
+.barrera-led { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.barrera-led.abierta { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.barrera-led.cerrada { background: var(--text3); }
+.barrera-info { flex: 1; }
+.barrera-name { font-size: 12px; font-weight: 500; color: var(--text); }
+.barrera-sub  { font-size: 11px; color: var(--text2); }
+.barrera-btn { font-size: 11px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border2); background: transparent; color: var(--text2); cursor: pointer; transition: all .2s; font-family: 'DM Sans', sans-serif; }
+.barrera-btn:hover { border-color: var(--blue); color: var(--blue); }
+
+/* ─── EVENTOS ────────────────────────────────────────────── */
+.events-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+.events-list::-webkit-scrollbar { width: 4px; }
+.events-list::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+.event-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--bg3); border-radius: 8px; border: 1px solid var(--border); animation: fadeIn .3s ease; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:none} }
+.event-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.event-dot.entrada { background: var(--blue); }
+.event-dot.salida  { background: var(--amber); }
+.event-dot.alerta  { background: var(--red); }
+.event-dot.info    { background: var(--text3); }
+.event-dot.system  { background: var(--teal); }
+.event-time { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--text3); min-width: 50px; }
+.event-msg  { font-size: 12px; color: var(--text2); flex: 1; }
+
+/* ─── BOTTOM ROW ─────────────────────────────────────────── */
+.bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* ─── HISTORIAL GRÁFICA ──────────────────────────────────── */
+.mini-chart { display: flex; align-items: flex-end; gap: 3px; height: 60px; padding: 0 4px; }
+.bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.bar-seg { width: 100%; border-radius: 3px 3px 0 0; transition: height .5s ease; min-height: 2px; }
+.bar-seg.occ  { background: var(--blue); opacity: .8; }
+.bar-seg.free { background: var(--green-dim); }
+.bar-col-label { font-size: 9px; color: var(--text3); font-family: 'DM Mono', monospace; }
+
+/* ─── CONEXIÓN MODAL ──────────────────────────────────────── */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: flex; align-items: center; justify-content: center; z-index: 200; backdrop-filter: blur(4px); }
+.modal { background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius-lg); padding: 24px; width: 400px; max-width: 95vw; }
+.modal h2 { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+.modal p  { font-size: 13px; color: var(--text2); margin-bottom: 20px; line-height: 1.6; }
+.modal label { font-size: 12px; font-weight: 500; color: var(--text2); display: block; margin-bottom: 5px; }
+.modal input, .modal select {
+  width: 100%; background: var(--bg3); border: 1px solid var(--border2);
+  border-radius: 8px; padding: 8px 12px; color: var(--text);
+  font-size: 13px; font-family: 'DM Mono', monospace;
+  outline: none; margin-bottom: 14px; transition: border-color .2s;
+}
+.modal input:focus, .modal select:focus { border-color: var(--blue); }
+.modal-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+.btn { padding: 8px 18px; border-radius: 8px; font-size: 13px; font-family: 'DM Sans', sans-serif; font-weight: 500; cursor: pointer; transition: all .2s; border: 1px solid; }
+.btn-primary { background: var(--blue); border-color: var(--blue); color: #000; }
+.btn-primary:hover { opacity: .85; }
+.btn-secondary { background: transparent; border-color: var(--border2); color: var(--text2); }
+.btn-secondary:hover { border-color: var(--text2); color: var(--text); }
+
+/* ─── RESPONSIVE ─────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .content-grid { grid-template-columns: 1fr; }
+  .bottom-row { grid-template-columns: 1fr; }
+  .stats-row { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+  .main { padding: 12px; gap: 12px; }
+  .stats-row { grid-template-columns: repeat(2, 1fr); }
+  .spots-grid { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <div class="logo">
+      <div class="logo-icon">
+        <svg viewBox="0 0 16 16"><path d="M2 2h12v2H2zM2 6h12v2H2zM8 10h6v2H8zM2 10h4v2H2z"/></svg>
+      </div>
+      <div class="logo-name">Smart<span>Parking</span></div>
+    </div>
+    <div class="topbar-right">
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="conn-pill offline" id="conn-pill" onclick="openModal()">
+        <div class="conn-dot" id="conn-dot"></div>
+        <span id="conn-label">Sin conexión</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <!-- STATS -->
+    <div class="stats-row">
+      <div class="stat-card blue">
+        <div class="stat-label">Total puestos</div>
+        <div class="stat-value" id="st-total">6</div>
+        <div class="stat-sub">Capacidad del parqueadero</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-label">Disponibles</div>
+        <div class="stat-value" id="st-libres">6</div>
+        <div class="stat-sub">Puestos libres ahora</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-label">Ocupados</div>
+        <div class="stat-value" id="st-ocupados">0</div>
+        <div class="stat-sub">Vehículos dentro</div>
+      </div>
+      <div class="stat-card amber">
+        <div class="stat-label">Ocupación</div>
+        <div class="stat-value" id="st-pct">0%</div>
+        <div class="occ-bar-wrap">
+          <div class="occ-bar-bg"><div class="occ-bar-fill" id="occ-bar" style="width:0%;background:var(--green)"></div></div>
+          <div class="occ-bar-label"><span>0%</span><span id="occ-bar-pct">0%</span><span>100%</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONTENT GRID -->
+    <div class="content-grid">
+
+      <!-- LEFT: MAPA DE PUESTOS -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Mapa de puestos</span>
+          <span class="card-badge green" id="map-badge">6 libres</span>
+        </div>
+        <div class="spots-grid" id="spots-grid"></div>
+      </div>
+
+      <!-- RIGHT COLUMN -->
+      <div class="right-col">
+
+        <!-- SEMÁFOROS -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Semáforos</span>
+          </div>
+          <div class="semaforos-grid">
+            <div class="semaforo-wrap">
+              <div class="sem-label">Entrada</div>
+              <div class="sem-body">
+                <div class="luz rojo off"    id="ent-rojo"></div>
+                <div class="luz amarillo off" id="ent-amarillo"></div>
+                <div class="luz verde on"    id="ent-verde"></div>
+              </div>
+              <div class="sem-estado" id="ent-estado" style="color:var(--green)">PASO</div>
+            </div>
+            <div class="semaforo-wrap">
+              <div class="sem-label">Salida</div>
+              <div class="sem-body">
+                <div class="luz rojo off"    id="sal-rojo"></div>
+                <div class="luz amarillo off" id="sal-amarillo"></div>
+                <div class="luz verde on"    id="sal-verde"></div>
+              </div>
+              <div class="sem-estado" id="sal-estado" style="color:var(--green)">PASO</div>
+            </div>
+          </div>
+          <!-- BARRERAS -->
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;">
+            <div class="barrera">
+              <div class="barrera-led cerrada" id="led-ent"></div>
+              <div class="barrera-info">
+                <div class="barrera-name">Barrera Entrada</div>
+                <div class="barrera-sub" id="txt-ent">Cerrada</div>
+              </div>
+              <button class="barrera-btn" onclick="cmdBarrera('OPEN_ENTRADA')">Abrir</button>
+            </div>
+            <div class="barrera">
+              <div class="barrera-led cerrada" id="led-sal"></div>
+              <div class="barrera-info">
+                <div class="barrera-name">Barrera Salida</div>
+                <div class="barrera-sub" id="txt-sal">Cerrada</div>
+              </div>
+              <button class="barrera-btn" onclick="cmdBarrera('OPEN_SALIDA')">Abrir</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- EVENTOS -->
+        <div class="card" style="flex:1;">
+          <div class="card-header">
+            <span class="card-title">Registro de eventos</span>
+            <button class="btn btn-secondary" style="padding:3px 10px;font-size:11px;" onclick="clearEvents()">Limpiar</button>
+          </div>
+          <div class="events-list" id="events-list">
+            <div class="event-item">
+              <div class="event-dot info"></div>
+              <span class="event-time">--:--:--</span>
+              <span class="event-msg">Esperando conexión con ESP32...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BOTTOM ROW -->
+    <div class="bottom-row">
+      <!-- HISTORIAL -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Historial de ocupación (últimas 10 lecturas)</span>
+        </div>
+        <div class="mini-chart" id="mini-chart"></div>
+      </div>
+
+      <!-- CONFIG MQTT -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Configuración MQTT</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">
+          <div>
+            <div style="color:var(--text3);margin-bottom:3px;">Broker</div>
+            <div style="font-family:'DM Mono',monospace;color:var(--text2);font-size:11px;" id="cfg-broker">—</div>
+          </div>
+          <div>
+            <div style="color:var(--text3);margin-bottom:3px;">Puerto</div>
+            <div style="font-family:'DM Mono',monospace;color:var(--text2);font-size:11px;" id="cfg-port">—</div>
+          </div>
+          <div>
+            <div style="color:var(--text3);margin-bottom:3px;">Topic estado</div>
+            <div style="font-family:'DM Mono',monospace;color:var(--blue);font-size:11px;">parking/status</div>
+          </div>
+          <div>
+            <div style="color:var(--text3);margin-bottom:3px;">Topic eventos</div>
+            <div style="font-family:'DM Mono',monospace;color:var(--blue);font-size:11px;">parking/events</div>
+          </div>
+          <div>
+            <div style="color:var(--text3);margin-bottom:3px;">Mensajes recibidos</div>
+            <div style="font-family:'DM Mono',monospace;color:var(--text2);font-size:11px;" id="cfg-msgs">0</div>
+          </div>
+          <div>
+            <div style="color:var(--text3);margin-bottom:3px;">Última actualización</div>
+            <div style="font-family:'DM Mono',monospace;color:var(--text2);font-size:11px;" id="cfg-last">—</div>
+          </div>
+        </div>
+        <button class="btn btn-secondary" style="width:100%;margin-top:14px;font-size:12px;" onclick="openModal()">Cambiar broker</button>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- MODAL CONFIGURACIÓN -->
+<div class="modal-overlay" id="modal" style="display:none;">
+  <div class="modal">
+    <h2>Conectar al ESP32</h2>
+    <p>Ingresa los datos del broker MQTT. Puedes usar el broker público de HiveMQ (no requiere cuenta) o tu propio broker local.</p>
+
+    <label>Broker MQTT (WebSocket)</label>
+    <select id="broker-preset" onchange="applyPreset()">
+      <option value="wss://broker.hivemq.com:8884/mqtt">HiveMQ público (gratis)</option>
+      <option value="wss://test.mosquitto.org:8081/mqtt">Mosquitto público (gratis)</option>
+      <option value="custom">Personalizado...</option>
+    </select>
+
+    <label>URL del broker</label>
+    <input id="broker-url" type="text" value="wss://broker.hivemq.com:8884/mqtt" placeholder="wss://broker:8884/mqtt" />
+
+    <label>Client ID (opcional)</label>
+    <input id="client-id" type="text" value="" placeholder="parking-dashboard-xxxx" />
+
+    <div style="background:var(--bg3);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--text2);line-height:1.7;">
+      <strong style="color:var(--amber);">Importante:</strong> El broker debe ser el mismo que configuraste en el ESP32.
+      HiveMQ público es ideal para pruebas. Para producción usa un broker propio.
+    </div>
+
+    <div class="modal-btns">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="conectar()">Conectar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ════════════════════════════════════════════════
+   ESTADO GLOBAL
+════════════════════════════════════════════════ */
+const TOTAL = 6;
+let spots = Array(TOTAL).fill(false);
+let events = [];
+let chartHistory = [];
+let mqttClient = null;
+let msgCount = 0;
+let barrEntAbierta = false;
+let barrSalAbierta = false;
+let timerEntrada = null;
+let timerSalida = null;
+const BARRIER_TIME = 5000;
+
+/* ════════════════════════════════════════════════
+   RELOJ
+════════════════════════════════════════════════ */
+function tickClock() {
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toLocaleTimeString('es-CO', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+/* ════════════════════════════════════════════════
+   RENDER PUESTOS
+════════════════════════════════════════════════ */
+function renderSpots() {
+  const g = document.getElementById('spots-grid');
+  g.innerHTML = '';
+  spots.forEach((occ, i) => {
+    const d = document.createElement('div');
+    d.className = `spot ${occ ? 'ocupado' : 'libre'}`;
+    d.innerHTML = `
+      <div class="spot-num">Puesto ${i+1}</div>
+      <div class="spot-icon">${occ ? '🚗' : ''}</div>
+      <div class="spot-state">${occ ? 'Ocupado' : 'Libre'}</div>`;
+    d.onclick = () => {
+      spots[i] = !spots[i];
+      addEvent(spots[i] ? 'entrada':'salida', `P${i+1} ${spots[i]?'ocupado manualmente':'liberado manualmente'}`);
+      updateAll();
+    };
+    g.appendChild(d);
+  });
+}
+
+/* ════════════════════════════════════════════════
+   SEMÁFOROS
+════════════════════════════════════════════════ */
+function setSemaforo(prefix, color) {
+  ['rojo','amarillo','verde'].forEach(c => {
+    const el = document.getElementById(`${prefix}-${c}`);
+    if (!el) return;
+    el.className = `luz ${c} ${c === color ? 'on' : 'off'}`;
+  });
+  const est = document.getElementById(`${prefix}-estado`);
+  if (!est) return;
+  const map = { rojo:{text:'STOP',color:'var(--red)'}, amarillo:{text:'ESPERE',color:'var(--amber)'}, verde:{text:'PASO',color:'var(--green)'} };
+  est.textContent = map[color].text;
+  est.style.color  = map[color].color;
+}
+
+/* ════════════════════════════════════════════════
+   BARRERAS
+════════════════════════════════════════════════ */
+function abrirBarrera(tipo) {
+  const led = document.getElementById(`led-${tipo}`);
+  const txt = document.getElementById(`txt-${tipo}`);
+  if (led) { led.className = 'barrera-led abierta'; }
+  if (txt) txt.textContent = 'Abierta';
+  setSemaforo(tipo, 'verde');
+
+  const timerRef = tipo === 'ent' ? timerEntrada : timerSalida;
+  clearTimeout(timerRef);
+  const t = setTimeout(() => cerrarBarrera(tipo), BARRIER_TIME);
+  if (tipo === 'ent') { barrEntAbierta = true; timerEntrada = t; }
+  else                { barrSalAbierta = true; timerSalida  = t; }
+}
+
+function cerrarBarrera(tipo) {
+  const led = document.getElementById(`led-${tipo}`);
+  const txt = document.getElementById(`txt-${tipo}`);
+  if (led) led.className = 'barrera-led cerrada';
+  if (txt) txt.textContent = 'Cerrada';
+  if (tipo === 'ent') { barrEntAbierta = false; setSemaforo('ent', spots.some(s=>!s) ? 'verde' : 'rojo'); }
+  else                { barrSalAbierta = false; setSemaforo('sal', 'verde'); }
+}
+
+function cmdBarrera(cmd) {
+  const tipo = cmd.includes('ENTRADA') ? 'ent' : 'sal';
+  abrirBarrera(tipo);
+  addEvent('info', `Barrera ${tipo === 'ent'?'entrada':'salida'} abierta manualmente`);
+  if (mqttClient && mqttClient.connected) {
+    mqttClient.publish('parking/command', cmd);
+  }
+}
+
+/* ════════════════════════════════════════════════
+   EVENTOS
+════════════════════════════════════════════════ */
+function addEvent(type, msg) {
+  const time = new Date().toLocaleTimeString('es-CO', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  events.unshift({type, msg, time});
+  if (events.length > 50) events.pop();
+  renderEvents();
+}
+
+function renderEvents() {
+  const el = document.getElementById('events-list');
+  if (!el) return;
+  if (events.length === 0) {
+    el.innerHTML = '<div class="event-item"><div class="event-dot info"></div><span class="event-time">--:--:--</span><span class="event-msg">Sin eventos</span></div>';
+    return;
+  }
+  el.innerHTML = events.map(e =>
+    `<div class="event-item"><div class="event-dot ${e.type}"></div><span class="event-time">${e.time}</span><span class="event-msg">${e.msg}</span></div>`
+  ).join('');
+}
+
+function clearEvents() { events = []; renderEvents(); }
+
+/* ════════════════════════════════════════════════
+   HISTORIAL / MINI-CHART
+════════════════════════════════════════════════ */
+function pushHistory(occ) {
+  chartHistory.push(occ);
+  if (chartHistory.length > 10) chartHistory.shift();
+  renderChart();
+}
+
+function renderChart() {
+  const el = document.getElementById('mini-chart');
+  if (!el) return;
+  el.innerHTML = '';
+  chartHistory.forEach((occ, i) => {
+    const pct = Math.round(occ / TOTAL * 100);
+    const col = document.createElement('div');
+    col.className = 'bar-col';
+    col.innerHTML = `
+      <div class="bar-seg occ" style="height:${pct}%;min-height:${pct>0?4:0}px;"></div>
+      <div class="bar-col-label">${i+1}</div>`;
+    el.appendChild(col);
+  });
+}
+
+/* ════════════════════════════════════════════════
+   UPDATE PRINCIPAL
+════════════════════════════════════════════════ */
+function updateAll() {
+  const occ = spots.filter(Boolean).length;
+  const libres = TOTAL - occ;
+  const pct = Math.round(occ / TOTAL * 100);
+
+  document.getElementById('st-libres').textContent   = libres;
+  document.getElementById('st-ocupados').textContent = occ;
+  document.getElementById('st-pct').textContent      = pct + '%';
+
+  const bar = document.getElementById('occ-bar');
+  bar.style.width = pct + '%';
+  bar.style.background = pct >= 100 ? 'var(--red)' : pct >= 70 ? 'var(--amber)' : 'var(--green)';
+  document.getElementById('occ-bar-pct').textContent = pct + '%';
+
+  const badge = document.getElementById('map-badge');
+  if (libres > 0) { badge.className='card-badge green'; badge.textContent=`${libres} libres`; }
+  else            { badge.className='card-badge red';   badge.textContent='¡Lleno!'; }
+
+  if (!barrEntAbierta) setSemaforo('ent', libres > 0 ? 'verde' : 'rojo');
+
+  renderSpots();
+  pushHistory(occ);
+}
+
+/* ════════════════════════════════════════════════
+   MQTT
+════════════════════════════════════════════════ */
+function setConnState(state) {
+  const pill = document.getElementById('conn-pill');
+  const dot  = document.getElementById('conn-dot');
+  const lbl  = document.getElementById('conn-label');
+  pill.className = `conn-pill ${state}`;
+  dot.className  = `conn-dot ${state === 'connecting' ? 'pulse' : ''}`;
+  if (state === 'online')     lbl.textContent = 'Conectado';
+  if (state === 'offline')    lbl.textContent = 'Sin conexión';
+  if (state === 'connecting') lbl.textContent = 'Conectando...';
+}
+
+function conectar() {
+  const url = document.getElementById('broker-url').value.trim();
+  let cid = document.getElementById('client-id').value.trim();
+  if (!cid) cid = 'parking-dash-' + Math.random().toString(36).substr(2,6);
+
+  closeModal();
+  document.getElementById('cfg-broker').textContent = url.replace(/wss?:\/\//,'').split(':')[0];
+  document.getElementById('cfg-port').textContent   = url.match(/:(\d+)/)?.[1] || '8884';
+
+  if (mqttClient) { try { mqttClient.end(true); } catch(e){} }
+  setConnState('connecting');
+  addEvent('system', `Conectando a ${url}...`);
+
+  const opts = {
+    clientId: cid,
+    clean: true,
+    reconnectPeriod: 5000,
+    connectTimeout: 10000,
+  };
+
+  try {
+    mqttClient = mqtt.connect(url, opts);
+  } catch(e) {
+    setConnState('offline');
+    addEvent('alerta', 'Error al crear cliente MQTT: ' + e.message);
+    return;
+  }
+
+  mqttClient.on('connect', () => {
+    setConnState('online');
+    addEvent('system', 'Conexión MQTT establecida');
+    mqttClient.subscribe(['parking/status','parking/events'], err => {
+      if (!err) addEvent('system', 'Subscrito a parking/status y parking/events');
+    });
+  });
+
+  mqttClient.on('error', err => {
+    setConnState('offline');
+    addEvent('alerta', 'Error MQTT: ' + (err.message || err));
+  });
+
+  mqttClient.on('offline', () => {
+    setConnState('offline');
+    addEvent('alerta', 'Conexión MQTT perdida. Reintentando...');
+  });
+
+  mqttClient.on('reconnect', () => {
+    setConnState('connecting');
+    addEvent('system', 'Reconectando...');
+  });
+
+  mqttClient.on('message', (topic, payload) => {
+    msgCount++;
+    document.getElementById('cfg-msgs').textContent = msgCount;
+    document.getElementById('cfg-last').textContent = new Date().toLocaleTimeString('es-CO');
+    try {
+      const data = JSON.parse(payload.toString());
+      if (topic === 'parking/status') handleStatus(data);
+      if (topic === 'parking/events') handleEvento(data);
+    } catch(e) {
+      addEvent('alerta', 'Error al parsear mensaje: ' + e.message);
+    }
+  });
+}
+
+function handleStatus(data) {
+  if (Array.isArray(data.puestos)) {
+    data.puestos.forEach((v, i) => { if (i < TOTAL) spots[i] = v === 1 || v === true; });
+  }
+  if (data.barreras) {
+    if (data.barreras.entrada === 'abierta') abrirBarrera('ent');
+    if (data.barreras.salida  === 'abierta') abrirBarrera('sal');
+  }
+  updateAll();
+}
+
+function handleEvento(data) {
+  const typeMap = {
+    'BARRERA_ENTRADA_ABIERTA': {t:'entrada', m:'Barrera de entrada abierta'},
+    'BARRERA_SALIDA_ABIERTA':  {t:'salida',  m:'Barrera de salida abierta'},
+    'VEHICULO_ENTRANDO':       {t:'entrada', m:'Vehículo ingresando al parqueadero'},
+    'VEHICULO_SALIENDO':       {t:'salida',  m:'Vehículo saliendo del parqueadero'},
+  };
+  const ev = typeMap[data.evento] || {t:'info', m: data.evento};
+  addEvent(ev.t, ev.m + (data.hora ? ` · ${data.hora}` : ''));
+
+  if (data.evento === 'BARRERA_ENTRADA_ABIERTA') abrirBarrera('ent');
+  if (data.evento === 'BARRERA_SALIDA_ABIERTA')  abrirBarrera('sal');
+}
+
+/* ════════════════════════════════════════════════
+   MODAL
+════════════════════════════════════════════════ */
+function openModal()  { document.getElementById('modal').style.display = 'flex'; }
+function closeModal() { document.getElementById('modal').style.display = 'none'; }
+function applyPreset() {
+  const sel = document.getElementById('broker-preset').value;
+  if (sel !== 'custom') document.getElementById('broker-url').value = sel;
+}
+document.getElementById('modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal')) closeModal();
+});
+
+/* ════════════════════════════════════════════════
+   INIT
+════════════════════════════════════════════════ */
+renderSpots();
+updateAll();
+addEvent('system', 'Dashboard iniciado. Configura la conexión MQTT para recibir datos del ESP32.');
+setTimeout(() => openModal(), 600);
+</script>
+</body>
+</html>
